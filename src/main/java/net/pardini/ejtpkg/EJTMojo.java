@@ -35,6 +35,8 @@ import java.net.URL;
 import java.nio.charset.Charset;
 import java.util.*;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /**
  * The Mojo.
@@ -98,6 +100,14 @@ public class EJTMojo extends AbstractMojo {
      * @parameter
      */
     private String ajpPort;
+    /**
+     * @parameter
+     */
+    private String tomcatWin64ZipURL;
+    /**
+     * @parameter
+     */
+    private String jreWin64TarGzURL;
 
 // ------------------------ INTERFACE METHODS ------------------------
 
@@ -119,6 +129,10 @@ public class EJTMojo extends AbstractMojo {
         if ((explodedWarDir == null) || (!explodedWarDir.exists()))
             throw new RuntimeException("war:exploded dir not found");
 
+
+        addToTemplate("jreWin64TarGzURL", jreWin64TarGzURL, "http://download.oracle.com/otn-pub/java/jdk/7u11-b21/jre-7u11-windows-x64.tar.gz");
+        addToTemplate("tomcatWin64ZipURL", tomcatWin64ZipURL, "http://apache.mirror.pop-sc.rnp.br/apache/tomcat/tomcat-7/v7.0.35/bin/apache-tomcat-7.0.35-windows-x64.zip");
+
         addToTemplate("webAppDirName", webAppDirName);
         addToTemplate("maxPermSizeMb", maxPermSizeMb, "256");
         addToTemplate("maxHeapSizeMb", maxHeapSizeMb, "2048");
@@ -134,8 +148,8 @@ public class EJTMojo extends AbstractMojo {
             Map<String, byte[]> finalFiles = new LinkedHashMap<String, byte[]>();
             final List<String> neededFilesList = getNeededFilesList();
 
-            finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadJREFromOracle("http://download.oracle.com/otn-pub/java/jdk/7u11-b21/jre-7u11-windows-x64.tar.gz"), "jre"), neededFilesList));
-            finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadTomcatFromApache("http://apache.mirror.pop-sc.rnp.br/apache/tomcat/tomcat-7/v7.0.35/bin/apache-tomcat-7.0.35-windows-x64.zip"), "tomcat"), neededFilesList));
+            finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadJREFromOracle(templateValues.get("jreWin64TarGzURL")), "jre"), neededFilesList));
+            finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadTomcatFromApache(templateValues.get("tomcatWin64ZipURL")), "tomcat"), neededFilesList));
 
             addResourceFileDirectly(finalFiles, "conf/catalina.policy");
             addResourceFileDirectly(finalFiles, "conf/catalina.properties");
@@ -155,9 +169,39 @@ public class EJTMojo extends AbstractMojo {
 
             writeFilesToOutputDir(realOutputDir, finalFiles);
 
+            zipFolder(realOutputDir, new File(projectBuildDir, String.format("%s.zip", templateValues.get("outputDirName"))));
+
             return realOutputDir;
         } catch (Exception e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private void zipFolder(final File folderToZip, final File fileToZipTo) {
+        try {
+            ZipOutputStream out = new ZipOutputStream(new FileOutputStream(fileToZipTo));
+            int len = folderToZip.getAbsolutePath().lastIndexOf(File.separator);
+            String baseName = folderToZip.getAbsolutePath().substring(0, len + 1);
+            addFolderToZip(folderToZip, out, baseName);
+            out.close();
+        } catch (IOException e) {
+            throw new RuntimeException(String.format("%s", e.getMessage()), e);
+        }
+    }
+
+
+    private static void addFolderToZip(File folder, ZipOutputStream zip, String baseName) throws IOException {
+        File[] files = folder.listFiles();
+        for (File file : files) {
+            if (file.isDirectory()) {
+                addFolderToZip(file, zip, baseName);
+            } else {
+                String name = file.getAbsolutePath().substring(baseName.length());
+                ZipEntry zipEntry = new ZipEntry(name);
+                zip.putNextEntry(zipEntry);
+                IOUtils.copy(new FileInputStream(file), zip);
+                zip.closeEntry();
+            }
         }
     }
 
