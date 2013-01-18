@@ -119,14 +119,15 @@ public class EJTMojo extends AbstractMojo {
         if ((explodedWarDir == null) || (!explodedWarDir.exists()))
             throw new RuntimeException("war:exploded dir not found");
 
-        addToTemplate("maxPermSizeMb", maxPermSizeMb, "2048");
-        addToTemplate("maxHeapSizeMb", maxHeapSizeMb, "256");
+        addToTemplate("webAppDirName", webAppDirName);
+        addToTemplate("maxPermSizeMb", maxPermSizeMb, "256");
+        addToTemplate("maxHeapSizeMb", maxHeapSizeMb, "2048");
         addToTemplate("httpPort", httpPort, "8080");
         addToTemplate("ajpPort", ajpPort, "8009");
         addToTemplate("serviceName", serviceName, String.format("%sTomcat7", webAppDirName));
         addToTemplate("serviceDescription", serviceDescription, String.format("%s - Tomcat 7", webAppDirName));
 
-        File realOutputDir = new File(projectBuildDir, addToTemplate("rootWebAppDirName", String.format("%sJRETomcatRunnerWin64", webAppDirName)));
+        File realOutputDir = new File(projectBuildDir, addToTemplate("outputDirName", String.format("%sJRETomcatRunnerWin64", webAppDirName)));
         try {
             if (realOutputDir.exists()) realOutputDir.mkdirs();
 
