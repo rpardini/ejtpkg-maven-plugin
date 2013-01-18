@@ -4,11 +4,14 @@ import com.google.common.base.Predicate;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.io.Files;
 import org.apache.commons.compress.archivers.ArchiveEntry;
 import org.apache.commons.compress.archivers.ArchiveInputStream;
 import org.apache.commons.compress.archivers.ArchiveStreamFactory;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang.StringUtils;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
@@ -24,15 +27,13 @@ import org.apache.maven.settings.Proxy;
 import org.apache.maven.settings.Settings;
 import org.apache.maven.wagon.proxy.ProxyInfo;
 import org.sonatype.inject.Nullable;
+import org.stringtemplate.v4.ST;
 
 import java.io.*;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.Charset;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -52,6 +53,16 @@ public class EJTMojo extends AbstractMojo {
      */
     protected File projectBuildDir;
 
+
+    /**
+     * The final name of the project
+     *
+     * @parameter default-value="${project.build.finalName}
+     * @required
+     */
+    protected String finalName;
+    private final Map<String, String> templateValues = new HashMap<String, String>();
+
     private final Log log = this.getLog();
 
 
@@ -62,57 +73,112 @@ public class EJTMojo extends AbstractMojo {
      */
     private MavenSettingsBuilder mavenSettingsBuilder;
 
+
+    /**
+     * @parameter
+     */
+    private String maxPermSizeMb;
+    /**
+     * @parameter
+     */
+    private String maxHeapSizeMb;
+    /**
+     * @parameter
+     */
+    private String serviceName;
+    /**
+     * @parameter
+     */
+    private String serviceDescription;
+    /**
+     * @parameter
+     */
+    private String httpPort;
+    /**
+     * @parameter
+     */
+    private String ajpPort;
+
 // ------------------------ INTERFACE METHODS ------------------------
 
 
 // --------------------- Interface Mojo ---------------------
 
     public void execute() throws MojoExecutionException, MojoFailureException {
+        log.info(String.format("Build dir is %s", projectBuildDir));
+        log.info(String.format("Final name is %s", finalName));
+        File explodedWarDir = new File(projectBuildDir, finalName);
+        createEjtDir(projectBuildDir, explodedWarDir, finalName);
+    }
+
+// -------------------------- OTHER METHODS --------------------------
+
+    protected File createEjtDir(final File projectBuildDir, final File explodedWarDir, final String webAppDirName) {
+        if ((projectBuildDir == null) || (!projectBuildDir.exists()))
+            throw new RuntimeException("output dir not found");
+        if ((explodedWarDir == null) || (!explodedWarDir.exists()))
+            throw new RuntimeException("war:exploded dir not found");
+
+        addToTemplate("maxPermSizeMb", maxPermSizeMb, "2048");
+        addToTemplate("maxHeapSizeMb", maxHeapSizeMb, "256");
+        addToTemplate("httpPort", httpPort, "8080");
+        addToTemplate("ajpPort", ajpPort, "8009");
+        addToTemplate("serviceName", serviceName, String.format("%sTomcat7", webAppDirName));
+        addToTemplate("serviceDescription", serviceDescription, String.format("%s - Tomcat 7", webAppDirName));
+
+        File realOutputDir = new File(projectBuildDir, addToTemplate("rootWebAppDirName", String.format("%sJRETomcatRunnerWin64", webAppDirName)));
         try {
-            log.info(String.format("Build dir is %s", projectBuildDir));
+            if (realOutputDir.exists()) realOutputDir.mkdirs();
 
             Map<String, byte[]> finalFiles = new LinkedHashMap<String, byte[]>();
             final List<String> neededFilesList = getNeededFilesList();
 
-            finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadJREFromOracle("http://download.oracle.com/otn-pub/java/jdk/7u11-b21/jre-7u11-windows-x64.tar.gz"), "jre/"), neededFilesList));
-            finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadTomcatFromApache("http://apache.mirror.pop-sc.rnp.br/apache/tomcat/tomcat-7/v7.0.35/bin/apache-tomcat-7.0.35-windows-x64.zip"), "tomcat/"), neededFilesList));
+            finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadJREFromOracle("http://download.oracle.com/otn-pub/java/jdk/7u11-b21/jre-7u11-windows-x64.tar.gz"), "jre"), neededFilesList));
+            finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadTomcatFromApache("http://apache.mirror.pop-sc.rnp.br/apache/tomcat/tomcat-7/v7.0.35/bin/apache-tomcat-7.0.35-windows-x64.zip"), "tomcat"), neededFilesList));
 
             addResourceFileDirectly(finalFiles, "conf/catalina.policy");
             addResourceFileDirectly(finalFiles, "conf/catalina.properties");
             addResourceFileDirectly(finalFiles, "conf/context.xml");
             addResourceFileDirectly(finalFiles, "conf/logging.properties");
-            addResourceFileDirectly(finalFiles, "conf/server.xml");
             addResourceFileDirectly(finalFiles, "conf/web.xml");
+
+            addResourceFileFiltered(finalFiles, "conf/server.xml");
 
             addFilteredCombinedWindowsScriptFile(finalFiles, "installAsService.bat");
             addFilteredCombinedWindowsScriptFile(finalFiles, "removeService.bat");
             addFilteredCombinedWindowsScriptFile(finalFiles, "run.bat");
 
+            addAllRealFilesFromDir(finalFiles, explodedWarDir, webAppDirName);
+
             log.info(finalFiles.keySet().toString());
+
+            writeFilesToOutputDir(realOutputDir, finalFiles);
+
+            return realOutputDir;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    private void addFilteredCombinedWindowsScriptFile(final Map<String, byte[]> finalFiles, final String windowsScriptFile) {
-        finalFiles.put(windowsScriptFile, String.format("%s%s", getWindowsCommonFiltered(), getContentsOfResourceFileAsString(String.format("windows/scripts/%s", windowsScriptFile))).getBytes(Charset.defaultCharset()));
+    private String addToTemplate(final String key, final String value, final String defaultValue) {
+        return addToTemplate(key, ((StringUtils.trimToNull(value) == null)) ? defaultValue : value);
     }
 
-    private String getWindowsCommonFiltered() {
-        return getContentsOfResourceFileAsString("windows/scripts/common.bat"); // @TODO actually filter
+    private String addToTemplate(final String key, final String value) {
+        templateValues.put(key, value);
+        return value;
     }
 
-// -------------------------- OTHER METHODS --------------------------
-
-    private void addResourceFileDirectly(final Map<String, byte[]> filteredFiles, final String resourceFile) {
-        filteredFiles.put(resourceFile, getContentsOfResourceFileAsByteArray(resourceFile));
+    private List<String> getNeededFilesList() throws IOException {
+        String fileToRead = getContentsOfResourceFileAsString("windows/neededfiles.txt");
+        return Lists.newArrayList(Splitter.on("\n").omitEmptyStrings().trimResults().split(fileToRead));
     }
 
-    private byte[] getContentsOfResourceFileAsByteArray(String fileToRead) {
+    private String getContentsOfResourceFileAsString(String fileToRead) {
         try {
-            return IOUtils.toByteArray(this.getClass().getClassLoader().getResourceAsStream(fileToRead));
+            return IOUtils.toString(this.getClass().getClassLoader().getResourceAsStream(fileToRead), "UTF-8");
         } catch (IOException e) {
-            throw new RuntimeException(String.format("%s", e.getMessage()), e);
+            throw new RuntimeException(String.format("%s: %s", e.getMessage(), fileToRead), e);
         }
     }
 
@@ -162,10 +228,6 @@ public class EJTMojo extends AbstractMojo {
         return null;
     }
 
-    private File downloadTomcatFromApache(final String url) {
-        return getFileToTemp(url);
-    }
-
     private Map<String, byte[]> filterEntriesByList(final Map<String, byte[]> allDownloadedFiles, final List<String> list) {
         return Maps.filterKeys(allDownloadedFiles, new Predicate<String>() {
             @Override
@@ -173,33 +235,6 @@ public class EJTMojo extends AbstractMojo {
                 return list.contains(entryName);
             }
         });
-    }
-
-    private List<String> getNeededFilesList() throws IOException {
-        String fileToRead = getContentsOfResourceFileAsString("windows/neededfiles.txt");
-        return Lists.newArrayList(Splitter.on("\n").omitEmptyStrings().trimResults().split(fileToRead));
-    }
-
-    private String getContentsOfResourceFileAsString(String fileToRead) {
-        try {
-            return IOUtils.toString(this.getClass().getClassLoader().getResourceAsStream(fileToRead), "UTF-8");
-        } catch (IOException e) {
-            throw new RuntimeException(String.format("%s: %s", e.getMessage(), fileToRead), e);
-        }
-    }
-
-    protected String getProxyFromMavenSettings() {
-        try {
-            Settings settings = mavenSettingsBuilder.buildSettings();
-            ProxyInfo proxyInfo = null;
-            if (settings != null && settings.getActiveProxy() != null) {
-                Proxy settingsProxy = settings.getActiveProxy();
-                return settingsProxy.getProtocol() + settingsProxy.getHost() + ":" + settingsProxy.getPort();
-            }
-            return null;
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
     }
 
     private Map<String, byte[]> readEntriesFromArchive(final File inputFile, final String firstDir) throws Exception {
@@ -219,7 +254,7 @@ public class EJTMojo extends AbstractMojo {
             if (!entry.isDirectory()) {
                 String fullName = entry.getName();
                 String key = removeFirstPartOfPath(fullName);
-                if (firstDir != null) key = firstDir + key;
+                if (firstDir != null) key = String.format("%s/%s", firstDir, key);
                 stringHashMap.put(key, IOUtils.toByteArray(archiveInputStream));
             }
         }
@@ -229,5 +264,95 @@ public class EJTMojo extends AbstractMojo {
 
     private String removeFirstPartOfPath(final String fullName) {
         return fullName.substring(fullName.indexOf("/") + 1);
+    }
+
+    private File downloadTomcatFromApache(final String url) {
+        return getFileToTemp(url);
+    }
+
+    private void addResourceFileDirectly(final Map<String, byte[]> filteredFiles, final String resourceFile) {
+        filteredFiles.put(resourceFile, getContentsOfResourceFileAsByteArray(resourceFile));
+    }
+
+    private byte[] getContentsOfResourceFileAsByteArray(String fileToRead) {
+        try {
+            return IOUtils.toByteArray(this.getClass().getClassLoader().getResourceAsStream(fileToRead));
+        } catch (IOException e) {
+            throw new RuntimeException(String.format("%s", e.getMessage()), e);
+        }
+    }
+
+    private void addResourceFileFiltered(final Map<String, byte[]> finalFiles, final String resourceFile) {
+        try {
+            finalFiles.put(resourceFile, runFiltersOnString(getContentsOfResourceFileAsString(resourceFile)).getBytes("UTF-8"));
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(String.format("%s", e.getMessage()), e);
+        }
+    }
+
+    private void addFilteredCombinedWindowsScriptFile(final Map<String, byte[]> finalFiles, final String windowsScriptFile) {
+        finalFiles.put(windowsScriptFile, String.format("%s%s", getWindowsCommonFiltered(), getContentsOfResourceFileAsString(String.format("windows/scripts/%s", windowsScriptFile))).getBytes(Charset.defaultCharset()));
+    }
+
+    private void addAllRealFilesFromDir(final Map<String, byte[]> finalFiles, final File explodedWarDir, final String rootwebapp) {
+        Collection<File> files = FileUtils.listFiles(explodedWarDir, null, true);
+        for (File file : files) {
+            String relativeFileName = getRelativePathNameSimplistic(file, explodedWarDir);
+            if (rootwebapp != null) relativeFileName = String.format("%s/%s", rootwebapp, relativeFileName);
+            try {
+                finalFiles.put(relativeFileName, Files.toByteArray(file));
+            } catch (IOException e) {
+                throw new RuntimeException(String.format("%s", e.getMessage()), e);
+            }
+        }
+    }
+
+    private String getRelativePathNameSimplistic(final File file, final File explodedWarDir) {
+        return explodedWarDir.toURI().relativize(file.toURI()).getPath();
+    }
+
+    private void writeFilesToOutputDir(final File realOutputDir, final Map<String, byte[]> finalFiles) {
+        for (String fileName : finalFiles.keySet()) {
+            byte[] fileBytes = finalFiles.get(fileName);
+            File outFile = new File(realOutputDir, fileName);
+            File parentFile = outFile.getParentFile();
+            if (!parentFile.exists()) parentFile.mkdirs();
+            try {
+                Files.write(fileBytes, outFile);
+            } catch (IOException e) {
+                throw new RuntimeException(String.format("%s: %s", e.getMessage(), outFile), e);
+            }
+        }
+    }
+
+    protected String getProxyFromMavenSettings() {
+        try {
+            Settings settings = mavenSettingsBuilder.buildSettings();
+            ProxyInfo proxyInfo = null;
+            if (settings != null && settings.getActiveProxy() != null) {
+                Proxy settingsProxy = settings.getActiveProxy();
+                return settingsProxy.getProtocol() + settingsProxy.getHost() + ":" + settingsProxy.getPort();
+            }
+            return null;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private String getWindowsCommonFiltered() {
+        return runFiltersOnString(getContentsOfResourceFileAsString("windows/scripts/common.bat"));
+    }
+
+    private String runFiltersOnString(final String contentsOfResourceFileAsString) {
+        return runTemplate(contentsOfResourceFileAsString).render();
+    }
+
+    private ST runTemplate(final String templateString) {
+        ST template = new ST(templateString, '$', '$');
+        for (String key : this.templateValues.keySet()) {
+            String value = this.templateValues.get(key);
+            template.add(key, value);
+        }
+        return template;
     }
 }

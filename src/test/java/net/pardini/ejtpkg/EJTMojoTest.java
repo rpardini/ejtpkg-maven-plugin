@@ -2,6 +2,8 @@ package net.pardini.ejtpkg;
 
 import org.testng.annotations.Test;
 
+import java.io.File;
+
 /**
  * Created with IntelliJ IDEA.
  * User: pardini
@@ -13,8 +15,8 @@ public class EJTMojoTest {
 // -------------------------- OTHER METHODS --------------------------
 
     @Test
-    public void testExecute() throws Exception {
+    public void testOutsideMaven() throws Exception {
         EJTMojo ejtMojo = new EJTMojo();
-        ejtMojo.execute();
+        ejtMojo.createEjtDir(new File("target"), new File("target/classes"), "testWebAppName");
     }
 }
