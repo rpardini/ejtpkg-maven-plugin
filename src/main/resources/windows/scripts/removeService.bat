@@ -1,0 +1,3 @@
+"%EXECUTABLE%" //DS//%SERVICE_NAME%
+
+pause

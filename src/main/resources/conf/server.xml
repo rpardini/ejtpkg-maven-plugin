@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Server port="8005" shutdown="SHUTDOWN">
+
+	<Listener className="org.apache.catalina.core.AprLifecycleListener" SSLEngine="off" />
+
+	<Service name="Catalina">
+
+		<Connector port="8080" protocol="HTTP/1.1" URIEncoding="UTF-8" connectionTimeout="20000" redirectPort="8443" />
+		<Connector port="8009" protocol="AJP/1.3" URIEncoding="UTF-8" redirectPort="8443" />
+		
+		
+		<Engine name="Catalina" defaultHost="localhost">
+
+			<Host name="localhost" appBase="webapps" unpackWARs="false" autoDeploy="false">
+				
+				<Context path="/" docBase="../rootwebapp" antiResourceLocking="false" />
+				
+			</Host>
+
+		</Engine>
+	</Service>
+</Server>
