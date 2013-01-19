@@ -103,12 +103,15 @@ public class EJTMojo extends AbstractMojo {
     /**
      * @parameter
      */
+    private String ajpPortSecure;
+    /**
+     * @parameter
+     */
     private String tomcatWin64ZipURL;
     /**
      * @parameter
      */
     private String jreWin64TarGzURL;
-
 // ------------------------ INTERFACE METHODS ------------------------
 
 
@@ -138,6 +141,7 @@ public class EJTMojo extends AbstractMojo {
         addToTemplate("maxHeapSizeMb", maxHeapSizeMb, "2048");
         addToTemplate("httpPort", httpPort, "8080");
         addToTemplate("ajpPort", ajpPort, "8009");
+        addToTemplate("ajpPortSecure", ajpPortSecure, "8019");
         addToTemplate("serviceName", serviceName, String.format("%sTomcat7", webAppDirName));
         addToTemplate("serviceDescription", serviceDescription, String.format("%s - Tomcat 7", webAppDirName));
 
@@ -148,7 +152,7 @@ public class EJTMojo extends AbstractMojo {
             Map<String, byte[]> finalFiles = new LinkedHashMap<String, byte[]>();
             final List<String> neededFilesList = getNeededFilesList();
 
-            finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadJREFromOracle(templateValues.get("jreWin64TarGzURL")), "jre"), neededFilesList));
+            finalFiles.putAll((readEntriesFromArchive(downloadJREFromOracle(templateValues.get("jreWin64TarGzURL")), "jre")));
             finalFiles.putAll(filterEntriesByList(readEntriesFromArchive(downloadTomcatFromApache(templateValues.get("tomcatWin64ZipURL")), "tomcat"), neededFilesList));
 
             addResourceFileDirectly(finalFiles, "conf/catalina.policy");
@@ -165,7 +169,7 @@ public class EJTMojo extends AbstractMojo {
 
             addAllRealFilesFromDir(finalFiles, explodedWarDir, webAppDirName);
 
-            log.info(finalFiles.keySet().toString());
+            //log.info(finalFiles.keySet().toString());
 
             writeFilesToOutputDir(realOutputDir, finalFiles);
 
